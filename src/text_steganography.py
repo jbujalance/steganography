@@ -13,6 +13,7 @@ class TextSteganography:
     _LENGTH_TAG = cu.str2bin("SIZE")
     _START_TAG = cu.str2bin("START")
     _LENGTH_BITS = 32
+    _HEADER_LENGTH = len(_LENGTH_TAG) + _LENGTH_BITS + len(_START_TAG)
 
     def __init__(self, input_filename):
         self.image = Image.open(input_filename).convert("RGB")
@@ -44,10 +45,11 @@ class TextSteganography:
         Retrieves a hidden message from the class image if there is any
         :return: The hidden message or None if not messages found
         """
-        bit_list = self._get_bit_list()
-        self._check_length_tag(bit_list)
-        self._check_start_tag(bit_list)
-        return self._get_encoded_message(bit_list)
+        header_bit_list = self._get_header_bit_list()
+        self._check_length_tag(header_bit_list)
+        self._check_start_tag(header_bit_list)
+        message_binary_length = self._get_encoded_binary_message_length(header_bit_list)
+        return self._get_encoded_message(message_binary_length)
 
     def _check_capacity(self, message):
         """
@@ -60,8 +62,7 @@ class TextSteganography:
         available_bits = height * width * 3 * 1
         # In ASCII, each character is encoded in 7 bits, and each link between characters take 1 bit
         message_size = len(message) * 7 + len(message) - 1
-        headers_size = len(self._LENGTH_TAG) + self._LENGTH_BITS + len(self._START_TAG)
-        content_size = message_size + headers_size
+        content_size = message_size + self._HEADER_LENGTH
         if available_bits < content_size:
             raise CapacityException(content_size, available_bits)
 
@@ -107,26 +108,42 @@ class TextSteganography:
         binary_length = "".join(sublist)
         return cu.bin2long(binary_length)
 
-    def _get_encoded_message(self, bit_list):
+    def _get_encoded_message(self, message_length):
         """
         Retrieves the translated encoded message.
-        :param bit_list:  the encoded bits
+        :param message_length: the length of the binary representing the encoded message
         :return: human-readable encoded message
         """
-        header_length = len(self._LENGTH_TAG) + self._LENGTH_BITS + len(self._START_TAG)
-        message_length = self._get_encoded_binary_message_length(bit_list)
-        binary = "".join(bit_list[header_length:header_length + message_length])
+        binary = "".join(self._get_message_bit_list(message_length))
         return cu.bin2str(binary)
 
-    def _get_bit_list(self):
+    def _get_header_bit_list(self):
         """
-        :return: all the LSB used for message encryption in the image
+        :return: The list of bits conforming the header of the message
         """
-        # TODO there is no need to loop over all the image's pixels. We just need the bits until the end of the message
-        bit_list = list()
+        header_list = list()
         for x in range(self.image.size[0]):
             for y in range(self.image.size[1]):
                 rgb_tuple = self.pixels[x, y]
                 for channel in rgb_tuple:
-                    bit_list.append(cu.get_lsb(cu.int2bin(channel)))
-        return bit_list
+                    header_list.append(cu.get_lsb(cu.int2bin(channel)))
+                    if len(header_list) == self._HEADER_LENGTH:
+                        return header_list
+
+    def _get_message_bit_list(self, message_length):
+        """
+        :param message_length: the length of the binary representing the encoded message
+        :return: The list of bits conforming the encoded binary message
+        """
+        message_bits = list()
+        # TODO we can do better: it is useless to iterate over the header to skip it.
+        # Use some formula to get the initial x and y from which to start iterating in order to skip the header
+        index = AutoIncrementInt(0)
+        for x in range(self.image.size[0]):
+            for y in range(self.image.size[1]):
+                rgb_tuple = self.pixels[x, y]
+                for channel in rgb_tuple:
+                    if index.get_and_increment() >= self._HEADER_LENGTH:
+                        message_bits.append(cu.get_lsb(cu.int2bin(channel)))
+                    if len(message_bits) == message_length:
+                        return message_bits
